@@ -1,0 +1,178 @@
+<!doctype html>
+
+<html lang="id">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Penyimpanan File (Audio / Gambar / Video / Lainnya)</title>
+  <style>
+    :root{--bg:#f6f8fb;--card:#fff;--accent:#6b46c1;--muted:#6b7280}
+    body{font-family:Inter, system-ui, Arial; background:var(--bg); margin:0; padding:24px}
+    .wrap{max-width:980px;margin:0 auto}
+    header{display:flex;gap:12px;align-items:center;margin-bottom:18px}
+    h1{margin:0;font-size:20px}
+    .card{background:var(--card);padding:16px;border-radius:12px;box-shadow:0 6px 20px rgba(15,23,42,0.06)}
+    .uploader{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+    .dropzone{flex:1;min-height:110px;border:2px dashed #d1d5db;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-direction:column;padding:12px;cursor:pointer;background:linear-gradient(180deg, rgba(107,70,193,0.03), transparent)}
+    .btn{background:var(--accent);color:#fff;border:none;padding:8px 12px;border-radius:8px;cursor:pointer}
+    input[type=file]{display:none}
+    .files{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;margin-top:12px}
+    .file-item{border-radius:10px;padding:10px;background:#fbfdff;border:1px solid #eef2ff}
+    .meta{font-size:13px;color:var(--muted);margin-top:8px}
+    .controls{display:flex;gap:8px;margin-top:10px}
+    .small{font-size:12px;padding:6px 8px}
+    footer{margin-top:18px;color:var(--muted);font-size:13px}
+    .search{margin-left:auto}
+    .actions{display:flex;gap:8px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Penyimpanan File — Audio, Gambar, Video, Dokumen</h1>
+      <div class="search"></div>
+    </header><section class="card">
+  <div class="uploader">
+    <label class="dropzone" id="dropzone">
+      <strong>Klik atau seret file ke sini</strong>
+      <div style="font-size:13px;color:var(--muted);margin-top:6px">Mendukung banyak jenis: gambar, audio, video, PDF, dokumen, zip, dll.</div>
+      <input id="fileInput" type="file" multiple />
+    </label>
+    <div style="min-width:220px;display:flex;flex-direction:column;gap:8px">
+      <button class="btn" id="btnPick">Pilih File</button>
+      <div style="display:flex;gap:8px;">
+        <button class="small" id="btnExport">Ekspor JSON</button>
+        <button class="small" id="btnImport">Impor JSON</button>
+        <button class="small" id="btnClear">Hapus Semua</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="files" id="files"></div>
+
+  <footer>
+    Catatan: Semua data disimpan di browser (localStorage). Cocok untuk demo atau koleksi kecil. Untuk penggunaan serius/publik, butuh backend & penyimpanan server.
+  </footer>
+</section>
+
+  </div>  <script>
+    // Simple client-only file manager using localStorage.
+    // WARNING: localStorage kapasitas terbatas (biasanya ~5-10MB). Untuk file besar gunakan backend.
+
+    const fileInput = document.getElementById('fileInput');
+    const dropzone = document.getElementById('dropzone');
+    const filesEl = document.getElementById('files');
+    const btnPick = document.getElementById('btnPick');
+    const btnClear = document.getElementById('btnClear');
+    const btnExport = document.getElementById('btnExport');
+    const btnImport = document.getElementById('btnImport');
+
+    const STORAGE_KEY = 'simple_file_store_v1';
+
+    btnPick.addEventListener('click', ()=> fileInput.click());
+    fileInput.addEventListener('change', async (e)=> handleFiles(e.target.files));
+
+    // Drag & drop
+    ['dragenter','dragover'].forEach(ev=> dropzone.addEventListener(ev, (e)=>{ e.preventDefault(); dropzone.style.borderColor='#9f7aea'}));
+    ['dragleave','drop'].forEach(ev=> dropzone.addEventListener(ev, (e)=>{ e.preventDefault(); dropzone.style.borderColor='#d1d5db'}));
+    dropzone.addEventListener('drop', (e)=>{
+      const dt = e.dataTransfer; if(!dt) return;
+      handleFiles(dt.files);
+    });
+
+    btnClear.addEventListener('click', ()=>{ if(confirm('Hapus semua file dari browser?')){ localStorage.removeItem(STORAGE_KEY); renderList(); } });
+
+    btnExport.addEventListener('click', ()=>{
+      const data = localStorage.getItem(STORAGE_KEY) || '[]';
+      const blob = new Blob([data], {type:'application/json'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = 'file_store_export.json'; a.click(); URL.revokeObjectURL(url);
+    });
+
+    btnImport.addEventListener('click', ()=>{
+      const inp = document.createElement('input'); inp.type='file'; inp.accept='application/json'; inp.onchange = async (e)=>{
+        const f = e.target.files[0]; if(!f) return; const txt = await f.text(); try{ JSON.parse(txt); localStorage.setItem(STORAGE_KEY, txt); renderList(); alert('Impor selesai'); }catch(err){ alert('File JSON tidak valid') }
+      }; inp.click();
+    });
+
+    async function handleFiles(fileList){
+      if(!fileList || fileList.length===0) return;
+      const arr = Array.from(fileList);
+      const stored = loadStore();
+      for(const f of arr){
+        try{
+          const base = await readFileAsDataURL(f);
+          stored.push({id: genId(), name: f.name, type: f.type, size: f.size, dataURL: base, created: Date.now()});
+        }catch(e){ console.error('read fail',e) }
+      }
+      saveStore(stored);
+      renderList();
+    }
+
+    function readFileAsDataURL(file){
+      return new Promise((res,rej)=>{
+        const r = new FileReader();
+        r.onload = ()=> res(r.result);
+        r.onerror = ()=> rej(r.error);
+        r.readAsDataURL(file);
+      });
+    }
+
+    function genId(){ return 'f_' + Math.random().toString(36).slice(2,10); }
+
+    function loadStore(){ try{ return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]'); }catch(e){ return [] } }
+    function saveStore(v){ localStorage.setItem(STORAGE_KEY, JSON.stringify(v)); }
+
+    function humanSize(n){ if(n<1024) return n+' B'; if(n<1024*1024) return (n/1024).toFixed(1)+' KB'; return (n/1024/1024).toFixed(2)+' MB'; }
+
+    function renderList(){
+      const data = loadStore().slice().reverse();
+      filesEl.innerHTML = '';
+      if(data.length===0){ filesEl.innerHTML = '<div style="grid-column:1/-1;color:var(--muted);padding:18px;text-align:center">Belum ada file. Unggah file dari tombol di atas atau seret ke area.</div>'; return }
+
+      for(const item of data){
+        const div = document.createElement('div'); div.className='file-item';
+        const title = document.createElement('div'); title.innerHTML = `<strong>${escapeHtml(item.name)}</strong>`;
+        div.appendChild(title);
+
+        // preview
+        const t = item.type || '';
+        if(t.startsWith('image/')){
+          const img = document.createElement('img'); img.src = item.dataURL; img.style.maxWidth='100%'; img.style.borderRadius='8px'; img.style.marginTop='8px'; div.appendChild(img);
+        }else if(t.startsWith('audio/')){
+          const a = document.createElement('audio'); a.controls = true; a.src = item.dataURL; a.style.width='100%'; a.style.marginTop='8px'; div.appendChild(a);
+        }else if(t.startsWith('video/')){
+          const v = document.createElement('video'); v.controls = true; v.src = item.dataURL; v.style.width='100%'; v.style.maxHeight='220px'; v.style.marginTop='8px'; div.appendChild(v);
+        }else{
+          const icon = document.createElement('div'); icon.style.marginTop='8px'; icon.textContent = '📄 File: ' + (item.type || 'unknown'); div.appendChild(icon);
+        }
+
+        const meta = document.createElement('div'); meta.className='meta'; meta.textContent = `${new Date(item.created).toLocaleString()} • ${humanSize(item.size)} • ${item.type || '—'}`;
+        div.appendChild(meta);
+
+        const controls = document.createElement('div'); controls.className='controls';
+        const dl = document.createElement('button'); dl.className='small'; dl.textContent='Unduh'; dl.addEventListener('click', ()=> downloadItem(item));
+        const del = document.createElement('button'); del.className='small'; del.textContent='Hapus'; del.addEventListener('click', ()=>{ if(confirm('Hapus file ini?')){ removeItem(item.id); } });
+        controls.appendChild(dl); controls.appendChild(del);
+        div.appendChild(controls);
+
+        filesEl.appendChild(div);
+      }
+    }
+
+    function downloadItem(item){
+      const a = document.createElement('a'); a.href = item.dataURL; a.download = item.name || 'file'; document.body.appendChild(a); a.click(); a.remove();
+    }
+
+    function removeItem(id){
+      const arr = loadStore().filter(x=>x.id!==id); saveStore(arr); renderList();
+    }
+
+    // small escape
+    function escapeHtml(s){ return s.replace(/[&<>\"']/g, c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' })[c]); }
+
+    // init
+    renderList();
+
+  </script></body>
+</html>
